@@ -20,8 +20,8 @@ app = FastAPI(
 
 class Settings(BaseSettings):
     """Настройки приложения"""
-    capashi_url: str = "http://localhost:8000"
-    capashi_api_key: str = Field(..., description="API ключ для капаши")
+    capashi_url: str = "http://capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59-web:8000"
+    capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P"
     callback_base_url: str = "http://localhost:8080"
 
     class Config:
