@@ -20,9 +20,9 @@ app = FastAPI(
 
 class Settings(BaseSettings):
     """Настройки приложения"""
-    capashi_url: str = "http://capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59-web.default.svc.cluster.local:8000"
+    capashi_url: str = "http://capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59-web.capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59.svc:8000"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
-    callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.default.svc.cluster.local:8000"
+    callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9.svc:8000"
 
     class Config:
         env_file = ".env"
