@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     """Настройки consumer"""
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_group_id: str = "test-store-consumer-group"
+    kafka_topic_shipping_events: str = "student_vladarefiev_shipment.events"
 
     class Config:
         env_file = ".env"
@@ -32,8 +33,7 @@ async def process_shipment_events():
 
     # Создаем Kafka consumer
     consumer = AIOKafkaConsumer(
-        "order.shipped",
-        "order.cancelled",
+        settings.kafka_topic_shipping_events,
         bootstrap_servers=settings.kafka_brokers,
         group_id=settings.kafka_group_id,
         value_deserializer=lambda m: json.loads(m.decode('utf-8')) if m else None,

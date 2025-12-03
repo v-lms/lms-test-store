@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
     callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9.svc:8000"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
+    kafka_topic_order_events: str = "student_vladarefiev_order.events"
 
     class Config:
         env_file = ".env"
@@ -292,7 +293,7 @@ async def create_shipment(shipment_data: ShipmentCreate):
     try:
         # Отправляем сообщение в топик order.paid
         await kafka_producer.send(
-            topic="order.paid",
+            topic=settings.kafka_topic_order_events,
             value=message,
             key=shipment_data.order_id.encode('utf-8'),
         )
