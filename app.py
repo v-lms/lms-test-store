@@ -1,12 +1,16 @@
 """
 Простое приложение для тестирования интеграции с капаши
 """
+import asyncio
+import json
+import logging
 import os
 import uuid
 from decimal import Decimal
 from typing import Optional
 
 import httpx
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl, Field
 from pydantic_settings import BaseSettings
@@ -23,6 +27,8 @@ class Settings(BaseSettings):
     capashi_url: str = "http://capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59-web.capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59.svc:8000"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
     callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9.svc:8000"
+    kafka_brokers: str = "localhost:29092"
+    kafka_group_id: str = "test-store-consumer-group"
 
     class Config:
         env_file = ".env"
@@ -30,6 +36,10 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+logger = logging.getLogger(__name__)
+
+# Global Kafka producer
+kafka_producer: Optional[AIOKafkaProducer] = None
 
 
 # Schemas
@@ -74,6 +84,22 @@ class PaymentCallback(BaseModel):
     amount: Decimal
     error_message: Optional[str] = None
     processed_at: str
+
+
+class ShipmentCreate(BaseModel):
+    """Создание shipment - отправка order.paid в Kafka"""
+    order_id: str = Field(..., description="ID заказа")
+    item_id: str = Field(..., description="ID товара")
+    quantity: int = Field(..., gt=0, description="Количество товара")
+    idempotency_key: str = Field(..., description="Ключ идемпотентности")
+    event_type: str = Field(default="order.paid", description="Тип события")
+
+
+class ShipmentResponse(BaseModel):
+    """Ответ при создании shipment"""
+    message: str
+    order_id: str
+    topic: str
 
 
 @app.get("/")
@@ -217,6 +243,75 @@ async def payment_callback(callback: PaymentCallback):
         "status": "received",
         "message": "Callback processed successfully",
     }
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Инициализация Kafka producer при старте приложения"""
+    global kafka_producer
+    kafka_producer = AIOKafkaProducer(
+        bootstrap_servers=settings.kafka_brokers,
+        value_serializer=lambda v: json.dumps(v).encode('utf-8') if v else None,
+    )
+    await kafka_producer.start()
+    logger.info(f"Kafka producer started, connected to {settings.kafka_brokers}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Закрытие Kafka producer при остановке приложения"""
+    global kafka_producer
+    if kafka_producer:
+        await kafka_producer.stop()
+        logger.info("Kafka producer stopped")
+
+
+@app.post("/shipments", response_model=ShipmentResponse, status_code=201)
+async def create_shipment(shipment_data: ShipmentCreate):
+    """
+    Создать shipment - отправить событие order.paid в Kafka.
+
+    Это событие будет обработано shipping service в lms-capashi.
+    """
+    global kafka_producer
+
+    if not kafka_producer:
+        raise HTTPException(
+            status_code=500,
+            detail="Kafka producer not initialized",
+        )
+
+    # Формируем сообщение для Kafka
+    message = {
+        "order_id": shipment_data.order_id,
+        "item_id": shipment_data.item_id,
+        "quantity": shipment_data.quantity,
+        "idempotency_key": shipment_data.idempotency_key,
+        "event_type": shipment_data.event_type,
+    }
+
+    try:
+        # Отправляем сообщение в топик order.paid
+        await kafka_producer.send(
+            topic="order.paid",
+            value=message,
+            key=shipment_data.order_id.encode('utf-8'),
+        )
+        await kafka_producer.flush()
+
+        logger.info(f"Sent order.paid event to Kafka: order_id={shipment_data.order_id}")
+
+        return ShipmentResponse(
+            message="Shipment event sent to Kafka",
+            order_id=shipment_data.order_id,
+            topic="order.paid",
+        )
+    except Exception as e:
+        logger.error(f"Error sending message to Kafka: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при отправке сообщения в Kafka: {str(e)}",
+        )
 
 
 if __name__ == "__main__":

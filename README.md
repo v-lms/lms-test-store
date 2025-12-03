@@ -8,6 +8,8 @@
 - Создание ордеров (с автоматическим созданием платежа в капаши)
 - Создание платежей напрямую
 - Получение callback от капаши о статусе платежа
+- Создание shipment (отправка order.paid в Kafka)
+- Consumer для получения событий shipping (order.shipped, order.cancelled)
 
 ## Установка
 
@@ -31,11 +33,23 @@ cp .env.example .env
    - `CAPASHI_URL` - URL капаши API (по умолчанию `http://localhost:8000`)
    - `CAPASHI_API_KEY` - API ключ для аутентификации в капаши
    - `CALLBACK_BASE_URL` - базовый URL для callback (должен быть доступен из капаши)
+   - `KAFKA_BROKERS` - адрес Kafka брокера (по умолчанию `localhost:29092`)
+   - `KAFKA_GROUP_ID` - ID группы consumer (по умолчанию `test-store-consumer-group`)
 
 ## Запуск
 
 ### Локальный запуск
 
+**Запуск API и consumer вместе (рекомендуется):**
+```bash
+python runtime.py
+```
+
+Это запустит и API сервер, и consumer в одном процессе.
+
+**Или отдельно:**
+
+API сервер:
 ```bash
 python app.py
 ```
@@ -44,6 +58,13 @@ python app.py
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 ```
+
+Consumer для событий shipping (в отдельном терминале):
+```bash
+python consumer.py
+```
+
+Consumer будет слушать топики `order.shipped` и `order.cancelled` и выводить полученные сообщения в консоль.
 
 ### Запуск через Docker
 
@@ -148,6 +169,30 @@ Endpoint для получения callback от капаши о статусе 
 }
 ```
 
+### POST /shipments
+
+Создает shipment - отправляет событие `order.paid` в Kafka для обработки shipping service.
+
+**Тело запроса:**
+```json
+{
+  "order_id": "order-123",
+  "item_id": "550e8400-e29b-41d4-a716-446655440000",
+  "quantity": 5,
+  "idempotency_key": "unique-key-123",
+  "event_type": "order.paid"
+}
+```
+
+**Ответ:**
+```json
+{
+  "message": "Shipment event sent to Kafka",
+  "order_id": "order-123",
+  "topic": "order.paid"
+}
+```
+
 ## Примеры использования
 
 ### Создание ордера
@@ -171,6 +216,21 @@ curl -X POST http://localhost:8080/payments \
     "amount": "100.50"
   }'
 ```
+
+### Создание shipment
+
+```bash
+curl -X POST http://localhost:8080/shipments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "order_id": "order-123",
+    "item_id": "550e8400-e29b-41d4-a716-446655440000",
+    "quantity": 5,
+    "idempotency_key": "unique-key-123"
+  }'
+```
+
+После отправки shipment, shipping service обработает событие и отправит ответ в топики `order.shipped` или `order.cancelled`, которые можно увидеть в consumer.
 
 ## Документация API
 
