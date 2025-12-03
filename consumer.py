@@ -53,12 +53,6 @@ async def process_shipment_events():
                 if message.value is None:
                     continue
 
-                # Логируем полученное сообщение
-                logger.info(
-                    f"Received {message.topic} event {message.id}:\n"
-                    f"{json.dumps(message.value, indent=2, ensure_ascii=False)}"
-                )
-
                 logger.info(f"Received {message.topic} event for order {message.value.get('order_id', 'unknown')}")
 
             except Exception as e:
