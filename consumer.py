@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """Настройки consumer"""
-    kafka_brokers: str = "localhost:29092"
+    kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_group_id: str = "test-store-consumer-group"
 
     class Config:
