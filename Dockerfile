@@ -16,7 +16,7 @@ COPY consumer.py .
 COPY runtime.py .
 
 # Expose port
-EXPOSE 8080
+EXPOSE 8000
 
 # Run the application
 CMD ["python", "runtime.py"]
