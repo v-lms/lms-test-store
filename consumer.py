@@ -55,7 +55,7 @@ async def process_shipment_events():
 
                 # Просто принтим сообщение
                 print(f"\n{'='*60}")
-                print(f"Received {message.topic} event:")
+                print(f"Received {message.topic} event {message.id}:")
                 print(f"{'='*60}")
                 print(json.dumps(message.value, indent=2, ensure_ascii=False))
                 print(f"{'='*60}\n")
