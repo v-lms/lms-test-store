@@ -53,12 +53,11 @@ async def process_shipment_events():
                 if message.value is None:
                     continue
 
-                # Просто принтим сообщение
-                print(f"\n{'='*60}")
-                print(f"Received {message.topic} event {message.id}:")
-                print(f"{'='*60}")
-                print(json.dumps(message.value, indent=2, ensure_ascii=False))
-                print(f"{'='*60}\n")
+                # Логируем полученное сообщение
+                logger.info(
+                    f"Received {message.topic} event {message.id}:\n"
+                    f"{json.dumps(message.value, indent=2, ensure_ascii=False)}"
+                )
 
                 logger.info(f"Received {message.topic} event for order {message.value.get('order_id', 'unknown')}")
 
