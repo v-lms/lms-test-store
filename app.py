@@ -3,6 +3,7 @@
 """
 import json
 import logging
+import os
 import uuid
 from decimal import Decimal
 from typing import Optional
@@ -11,7 +12,7 @@ from uuid import UUID
 import httpx
 from aiokafka import AIOKafkaProducer
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """Настройки приложения"""
-    capashi_url: str = "http://capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59-web.capashi-c223baff-4c9b-4bb1-bc6b-474ae9b90a59.svc:8000"
+    capashi_url: str = "https://capashi.dev-1.python-labs.ru"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
     callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9.svc:8000"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
@@ -47,6 +48,39 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_database_url_from_postgres_connection_string(cls, values):
+        """Read POSTGRES_CONNECTION_STRING and set it as database_url"""
+        if isinstance(values, dict):
+            # Check if POSTGRES_CONNECTION_STRING is in environment
+            postgres_conn = os.getenv("POSTGRES_CONNECTION_STRING")
+            if postgres_conn:
+                # Convert postgresql:// to postgresql+asyncpg:// if needed
+                if postgres_conn.startswith("postgresql://"):
+                    values["database_url"] = postgres_conn.replace("postgresql://", "postgresql+asyncpg://")
+                elif postgres_conn.startswith("postgresql+asyncpg://"):
+                    values["database_url"] = postgres_conn
+                else:
+                    values["database_url"] = postgres_conn
+            # Also check if it's in the values dict (from .env file)
+            elif "POSTGRES_CONNECTION_STRING" in values:
+                conn = values["POSTGRES_CONNECTION_STRING"]
+                if conn.startswith("postgresql://"):
+                    values["database_url"] = conn.replace("postgresql://", "postgresql+asyncpg://")
+                elif conn.startswith("postgresql+asyncpg://"):
+                    values["database_url"] = conn
+                else:
+                    values["database_url"] = conn
+
+            # Read CAPASHI_URL from environment if available
+            capashi_url = os.getenv("CAPASHI_URL")
+            if capashi_url:
+                values["capashi_url"] = capashi_url
+            elif "CAPASHI_URL" in values:
+                values["capashi_url"] = values["CAPASHI_URL"]
+        return values
 
 
 settings = Settings()
