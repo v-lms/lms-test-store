@@ -4,9 +4,13 @@ Kafka consumer для получения сообщений от shipping servic
 import asyncio
 import json
 import logging
+from uuid import UUID
 
 from aiokafka import AIOKafkaConsumer
 from pydantic_settings import BaseSettings
+
+from db import OrderStatusEnum, get_session
+from repositories import update_order_status
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ async def process_shipment_events():
         # Запускаем consumer
         await consumer.start()
         logger.info(f"Connected to Kafka at {settings.kafka_brokers}")
-        logger.info("Listening for order.shipped and order.cancelled events...")
+        logger.info(f"Listening for shipping events on topic: {settings.kafka_topic_shipping_events}")
 
         # Обрабатываем сообщения
         async for message in consumer:
@@ -53,7 +57,36 @@ async def process_shipment_events():
                 if message.value is None:
                     continue
 
-                logger.info(f"Received {message.topic} event for order {message.value.get('order_id', 'unknown')}")
+                event_data = message.value
+                event_type = event_data.get("event_type", "")
+                order_id_str = event_data.get("order_id", "")
+
+                logger.info(f"Received event: {event_type} for order {order_id_str}")
+
+                if not order_id_str:
+                    logger.warning(f"No order_id in event: {event_data}")
+                    continue
+
+                # Определяем новый статус в зависимости от типа события
+                if event_type == "order.shipped":
+                    new_status = OrderStatusEnum.SHIPPED
+                elif event_type == "order.cancelled":
+                    new_status = OrderStatusEnum.CANCELLED
+                else:
+                    logger.warning(f"Unknown event type: {event_type}")
+                    continue
+
+                # Обновляем статус ордера
+                try:
+                    order_id = UUID(order_id_str)
+                except ValueError:
+                    logger.error(f"Invalid order_id format: {order_id_str}")
+                    continue
+
+                session_factory = get_session()
+                async with session_factory() as session:
+                    await update_order_status(session, order_id, new_status)
+                    logger.info(f"Updated order {order_id_str} status to {new_status}")
 
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)
@@ -66,4 +99,3 @@ async def process_shipment_events():
         # Закрываем соединение
         await consumer.stop()
         logger.info("Shipment consumer stopped")
-

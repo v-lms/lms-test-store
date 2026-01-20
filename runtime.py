@@ -10,6 +10,7 @@ import uvicorn
 
 from app import app
 from consumer import process_shipment_events
+from outbox_worker import run_outbox_worker
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ async def main():
     tasks = [
         asyncio.create_task(run_uvicorn(), name="uvicorn"),
         asyncio.create_task(run_shipment_consumer(), name="shipment_consumer"),
+        asyncio.create_task(run_outbox_worker(), name="outbox_worker"),
     ]
 
     try:

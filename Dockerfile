@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY consumer.py .
 COPY runtime.py .
+COPY db.py .
+COPY repositories.py .
+COPY outbox_worker.py .
 
 # Expose port
 EXPOSE 8000

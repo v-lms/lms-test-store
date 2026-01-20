@@ -1,25 +1,38 @@
 """
 Простое приложение для тестирования интеграции с капаши
 """
-import asyncio
 import json
 import logging
-import os
 import uuid
 from decimal import Decimal
 from typing import Optional
+from uuid import UUID
 
 import httpx
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka import AIOKafkaProducer
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import db
+from db import OrderStatusEnum
+from repositories import (
+    create_order as create_order_in_db,
+    create_outbox_event,
+    find_order_by_payment_id,
+    get_order_status,
+    get_session,
+    update_order_status,
+)
 
 app = FastAPI(
     title="LMS Test Store",
     description="Тестовое приложение для интеграции с капаши",
     version="1.0.0",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -29,6 +42,7 @@ class Settings(BaseSettings):
     callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9.svc:8000"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_topic_order_events: str = "student_vladarefiev_order.events"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/teststore"
 
     class Config:
         env_file = ".env"
@@ -36,7 +50,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-logger = logging.getLogger(__name__)
 
 # Global Kafka producer
 kafka_producer: Optional[AIOKafkaProducer] = None
@@ -47,6 +60,7 @@ class OrderCreate(BaseModel):
     """Создание ордера"""
     amount: Decimal = Field(..., gt=0, description="Сумма платежа")
     item_id: Optional[str] = Field(None, description="ID товара (опционально)")
+    user_id: str = Field(default="user-1", description="ID пользователя")
     idempotency_key: Optional[str] = Field(None, description="Ключ идемпотентности")
 
 
@@ -56,24 +70,6 @@ class OrderResponse(BaseModel):
     payment_id: str
     amount: Decimal
     status: str
-    created_at: str
-
-
-class PaymentCreate(BaseModel):
-    """Создание платежа"""
-    order_id: str = Field(..., description="ID заказа")
-    amount: Decimal = Field(..., gt=0, description="Сумма платежа")
-    idempotency_key: Optional[str] = Field(None, description="Ключ идемпотентности")
-
-
-class PaymentResponse(BaseModel):
-    """Ответ при создании платежа"""
-    id: str
-    user_id: str
-    order_id: str
-    amount: Decimal
-    status: str
-    created_at: str
 
 
 class PaymentCallback(BaseModel):
@@ -84,22 +80,6 @@ class PaymentCallback(BaseModel):
     amount: Decimal
     error_message: Optional[str] = None
     processed_at: str
-
-
-class ShipmentCreate(BaseModel):
-    """Создание shipment - отправка order.paid в Kafka"""
-    order_id: str = Field(..., description="ID заказа")
-    item_id: str = Field(..., description="ID товара")
-    quantity: int = Field(..., gt=0, description="Количество товара")
-    idempotency_key: str = Field(..., description="Ключ идемпотентности")
-    event_type: str = Field(default="order.paid", description="Тип события")
-
-
-class ShipmentResponse(BaseModel):
-    """Ответ при создании shipment"""
-    message: str
-    order_id: str
-    topic: str
 
 
 @app.get("/")
@@ -123,10 +103,13 @@ async def create_order(order_data: OrderCreate):
     """
     Создать ордер и платеж в капаши.
 
-    Генерирует order_id и создает платеж в капаши.
+    1. Создаем ордер в БД со статусом NEW
+    2. Создаем платеж в капаши
+    3. Сохраняем payment_id в ордере
     """
     # Генерируем order_id
-    order_id = f"order-{uuid.uuid4().hex[:12]}"
+    order_id_uuid = uuid.uuid4()
+    order_id_str = str(order_id_uuid)
 
     # Формируем callback URL
     callback_url = f"{settings.callback_base_url}/callback"
@@ -137,7 +120,7 @@ async def create_order(order_data: OrderCreate):
             response = await client.post(
                 f"{settings.capashi_url}/api/payments",
                 json={
-                    "order_id": order_id,
+                    "order_id": order_id_str,
                     "amount": str(order_data.amount),
                     "callback_url": callback_url,
                     "idempotency_key": order_data.idempotency_key,
@@ -161,61 +144,33 @@ async def create_order(order_data: OrderCreate):
             detail=f"Ошибка подключения к капаши: {str(e)}",
         )
 
+    payment_id = str(payment_data["id"])
+
+    # Сохраняем ордер в БД
+    session_factory = get_session()
+    async with session_factory() as session:
+        items = []
+        if order_data.item_id:
+            items = [{"id": order_data.item_id, "name": f"Item {order_data.item_id}", "price": float(order_data.amount)}]
+        else:
+            items = [{"id": "item-1", "name": "Default Item", "price": float(order_data.amount)}]
+
+        await create_order_in_db(
+            session=session,
+            order_id=order_id_uuid,
+            user_id=order_data.user_id,
+            payment_id=payment_id,
+            items=items,
+            amount=order_data.amount,
+        )
+
+    logger.info(f"Created order {order_id_str} with payment {payment_id}")
+
     return OrderResponse(
-        order_id=order_id,
-        payment_id=str(payment_data["id"]),
+        order_id=order_id_str,
+        payment_id=payment_id,
         amount=Decimal(str(payment_data["amount"])),
-        status=payment_data["status"],
-        created_at=payment_data["created_at"],
-    )
-
-
-@app.post("/payments", response_model=PaymentResponse, status_code=201)
-async def create_payment(payment_data: PaymentCreate):
-    """
-    Создать платеж в капаши.
-
-    Прямой вызов API капаши для создания платежа.
-    """
-    # Формируем callback URL
-    callback_url = f"{settings.callback_base_url}/callback"
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{settings.capashi_url}/api/payments",
-                json={
-                    "order_id": payment_data.order_id,
-                    "amount": str(payment_data.amount),
-                    "callback_url": callback_url,
-                    "idempotency_key": payment_data.idempotency_key,
-                },
-                headers={
-                    "X-API-Key": settings.capashi_api_key,
-                    "Content-Type": "application/json",
-                },
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            result = response.json()
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=f"Ошибка при создании платежа в капаши: {e.response.text}",
-        )
-    except httpx.RequestError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка подключения к капаши: {str(e)}",
-        )
-
-    return PaymentResponse(
-        id=str(result["id"]),
-        user_id=str(result["user_id"]),
-        order_id=result["order_id"],
-        amount=Decimal(str(result["amount"])),
-        status=result["status"],
-        created_at=result["created_at"],
+        status=OrderStatusEnum.NEW,
     )
 
 
@@ -224,21 +179,57 @@ async def payment_callback(callback: PaymentCallback):
     """
     Callback endpoint для получения уведомлений от капаши о статусе платежа.
 
-    Этот endpoint вызывается капаши после обработки платежа.
+    1. Находим ордер по payment_id
+    2. Обновляем статус ордера (PAID или CANCELLED)
+    3. Если платеж прошел - создаем событие в outbox для отправки в shipping
     """
-    # Здесь можно добавить логику обработки callback
-    # Например, обновление статуса заказа в БД, отправка уведомлений и т.д.
+    logger.info(f"Received payment callback: payment_id={callback.payment_id}, status={callback.status}")
 
-    print(f"Received payment callback:")
-    print(f"  Payment ID: {callback.payment_id}")
-    print(f"  Order ID: {callback.order_id}")
-    print(f"  Status: {callback.status}")
-    print(f"  Amount: {callback.amount}")
-    if callback.error_message:
-        print(f"  Error: {callback.error_message}")
-    print(f"  Processed at: {callback.processed_at}")
+    session_factory = get_session()
+    async with session_factory() as session:
+        # Находим ордер по payment_id
+        order_id = await find_order_by_payment_id(session, callback.payment_id)
 
-    # Возвращаем успешный ответ
+        if not order_id:
+            logger.warning(f"Order not found for payment_id={callback.payment_id}")
+            return {
+                "status": "error",
+                "message": f"Order not found for payment_id={callback.payment_id}",
+            }
+
+        # Определяем статус ордера
+        if callback.status.upper() == "SUCCESS" or callback.status.upper() == "PAID":
+            new_status = OrderStatusEnum.PAID
+        elif callback.status.upper() == "FAILED" or callback.status.upper() == "CANCELLED":
+            new_status = OrderStatusEnum.CANCELLED
+        else:
+            logger.warning(f"Unknown payment status: {callback.status}")
+            return {
+                "status": "received",
+                "message": f"Unknown payment status: {callback.status}",
+            }
+
+        # Обновляем статус ордера
+        await update_order_status(session, order_id, new_status)
+        logger.info(f"Updated order {order_id} status to {new_status}")
+
+        # Если платеж прошел - создаем событие в outbox для отправки в shipping
+        if new_status == OrderStatusEnum.PAID:
+            # Получаем текущий статус для проверки
+            current_status = await get_order_status(session, order_id)
+
+            # Создаем событие в outbox
+            payload = {
+                "order_id": str(order_id),
+                "event_type": "order.paid",
+            }
+            await create_outbox_event(
+                session=session,
+                event_type="order.paid",
+                payload=payload,
+            )
+            logger.info(f"Created outbox event for order {order_id}")
+
     return {
         "status": "received",
         "message": "Callback processed successfully",
@@ -247,8 +238,14 @@ async def payment_callback(callback: PaymentCallback):
 
 @app.on_event("startup")
 async def startup_event():
-    """Инициализация Kafka producer при старте приложения"""
+    """Инициализация БД и Kafka producer при старте приложения"""
     global kafka_producer
+
+    # Инициализируем БД
+    await db.init_db(settings.database_url)
+    logger.info(f"Database initialized: {settings.database_url}")
+
+    # Инициализируем Kafka producer
     kafka_producer = AIOKafkaProducer(
         bootstrap_servers=settings.kafka_brokers,
         value_serializer=lambda v: json.dumps(v).encode('utf-8') if v else None,
@@ -259,62 +256,20 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Закрытие Kafka producer при остановке приложения"""
+    """Закрытие подключений при остановке приложения"""
     global kafka_producer
+
+    # Закрываем Kafka producer
     if kafka_producer:
         await kafka_producer.stop()
         logger.info("Kafka producer stopped")
 
-
-@app.post("/shipments", response_model=ShipmentResponse, status_code=201)
-async def create_shipment(shipment_data: ShipmentCreate):
-    """
-    Создать shipment - отправить событие order.paid в Kafka.
-
-    Это событие будет обработано shipping service в lms-capashi.
-    """
-    global kafka_producer
-
-    if not kafka_producer:
-        raise HTTPException(
-            status_code=500,
-            detail="Kafka producer not initialized",
-        )
-
-    # Формируем сообщение для Kafka
-    message = {
-        "order_id": shipment_data.order_id,
-        "item_id": shipment_data.item_id,
-        "quantity": shipment_data.quantity,
-        "idempotency_key": shipment_data.idempotency_key,
-        "event_type": shipment_data.event_type,
-    }
-
-    try:
-        # Отправляем сообщение в топик order.paid
-        await kafka_producer.send(
-            topic=settings.kafka_topic_order_events,
-            value=message,
-            key=shipment_data.order_id.encode('utf-8'),
-        )
-        await kafka_producer.flush()
-
-        logger.info(f"Sent order.paid event to Kafka: order_id={shipment_data.order_id}")
-
-        return ShipmentResponse(
-            message="Shipment event sent to Kafka",
-            order_id=shipment_data.order_id,
-            topic="order.paid",
-        )
-    except Exception as e:
-        logger.error(f"Error sending message to Kafka: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка при отправке сообщения в Kafka: {str(e)}",
-        )
+    # Закрываем подключение к БД
+    await db.close_db()
+    logger.info("Database connection closed")
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
+# Глобальная переменная для передачи kafka_producer в другие модули
+def get_kafka_producer() -> Optional[AIOKafkaProducer]:
+    """Получить глобальный kafka producer"""
+    return kafka_producer
