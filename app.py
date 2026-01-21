@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
     callback_base_url: str = "https://vladarefiev-order-service.dev-1.python-labs.ru"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
-    kafka_topic_order_events: str = "student_vladarefiev_order.events"
+    kafka_topic_order_events: str = "student_system_order.events"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/teststore"
 
     class Config:
