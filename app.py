@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     """Настройки приложения"""
     capashi_url: str = "https://capashi.dev-1.python-labs.ru"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
-    callback_base_url: str = "http://order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9-web.order-service-707e52c1-1f84-4687-b3e6-9b0a54c49fb9.svc:8000"
+    callback_base_url: str = "https://vladarefiev-order-service.dev-1.python-labs.ru"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_topic_order_events: str = "student_vladarefiev_order.events"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/teststore"

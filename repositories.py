@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,12 +133,14 @@ async def get_order_by_id(
     )
 
     # Получаем ордер с текущим статусом
+    # Используем явное указание колонки через columns чтобы избежать конфликта с методом .items()
+    items_column = orders_tbl.columns['items']
     stmt = (
         select(
             orders_tbl.c.id,
             orders_tbl.c.user_id,
             orders_tbl.c.payment_id,
-            orders_tbl.c.items,
+            items_column.label("items"),
             orders_tbl.c.amount,
             orders_tbl.c.created_at,
             latest_status_subq.c.status.label("current_status"),
