@@ -36,11 +36,16 @@ async def process_outbox_events():
         for event in events:
             try:
                 # Отправляем событие в Kafka
-                message = {
-                    "event_type": event.event_type,
-                    "payload": event.payload,
-                    "created_at": str(event.created_at),
-                }
+                # Согласно заданию, событие должно быть в формате:
+                # {
+                #   "event_type": "order.paid",
+                #   "order_id": "order-uuid",
+                #   "item_id": "item-uuid",
+                #   "quantity": "10",
+                #   "idempotency_key": "idempotency_key-uuid"
+                # }
+                # Payload уже содержит правильный формат, отправляем его напрямую
+                message = event.payload
 
                 order_id = event.payload.get("order_id", "")
 

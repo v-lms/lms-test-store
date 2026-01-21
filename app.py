@@ -340,18 +340,50 @@ async def payment_callback(callback: PaymentCallback):
             order_data = await get_order_by_id(session, order_id)
 
             if order_data:
-                # Создаем событие в outbox с полной информацией об ордере
-                payload = {
-                    "order_id": str(order_id),
-                    "user_id": order_data["user_id"],
-                    "items": order_data["items"],  # Включает id, name, price, quantity
-                }
-                await create_outbox_event(
-                    session=session,
-                    event_type="order.paid",
-                    payload=payload,
-                )
-                logger.info(f"Created outbox event for order {order_id} with items: {order_data['items']}")
+                # Создаем отдельное событие для каждого item в заказе
+                # Формат события согласно заданию:
+                # {
+                #   "event_type": "order.paid",
+                #   "order_id": "order-uuid",
+                #   "item_id": "item-uuid",
+                #   "quantity": "10",
+                #   "idempotency_key": "idempotency_key-uuid"
+                # }
+                items = order_data.get("items", [])
+                if not items:
+                    logger.warning(f"No items found in order {order_id}")
+                else:
+                    for item in items:
+                        item_id = item.get("id")
+                        quantity = item.get("quantity")
+
+                        if not item_id or quantity is None:
+                            logger.warning(f"Invalid item data in order {order_id}: {item}")
+                            continue
+
+                        # Генерируем idempotency_key на основе order_id, item_id и quantity
+                        # Это обеспечит идемпотентность обработки
+                        idempotency_key = f"{order_id}-{item_id}-{quantity}"
+
+                        # Создаем событие в формате согласно заданию
+                        # В задании указано quantity как строка, но в модели OrderPaidEvent это int
+                        # Pydantic автоматически преобразует, но лучше отправить как int
+                        event_payload = {
+                            "event_type": "order.paid",
+                            "order_id": str(order_id),
+                            "item_id": str(item_id),
+                            "quantity": int(quantity),  # Преобразуем в int для соответствия модели
+                            "idempotency_key": idempotency_key,
+                        }
+
+                        await create_outbox_event(
+                            session=session,
+                            event_type="order.paid",
+                            payload=event_payload,
+                        )
+                        logger.info(
+                            f"Created outbox event for order {order_id}, item {item_id}, quantity {quantity}"
+                        )
 
     return {
         "status": "received",
