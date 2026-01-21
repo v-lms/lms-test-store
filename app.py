@@ -56,8 +56,10 @@ class Settings(BaseSettings):
             # Check if POSTGRES_CONNECTION_STRING is in environment
             postgres_conn = os.getenv("POSTGRES_CONNECTION_STRING")
             if postgres_conn:
-                # Convert postgresql:// to postgresql+asyncpg:// if needed
-                if postgres_conn.startswith("postgresql://"):
+                # Convert postgres:// or postgresql:// to postgresql+asyncpg://
+                if postgres_conn.startswith("postgres://"):
+                    values["database_url"] = postgres_conn.replace("postgres://", "postgresql+asyncpg://")
+                elif postgres_conn.startswith("postgresql://"):
                     values["database_url"] = postgres_conn.replace("postgresql://", "postgresql+asyncpg://")
                 elif postgres_conn.startswith("postgresql+asyncpg://"):
                     values["database_url"] = postgres_conn
@@ -66,7 +68,9 @@ class Settings(BaseSettings):
             # Also check if it's in the values dict (from .env file)
             elif "POSTGRES_CONNECTION_STRING" in values:
                 conn = values["POSTGRES_CONNECTION_STRING"]
-                if conn.startswith("postgresql://"):
+                if conn.startswith("postgres://"):
+                    values["database_url"] = conn.replace("postgres://", "postgresql+asyncpg://")
+                elif conn.startswith("postgresql://"):
                     values["database_url"] = conn.replace("postgresql://", "postgresql+asyncpg://")
                 elif conn.startswith("postgresql+asyncpg://"):
                     values["database_url"] = conn
