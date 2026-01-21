@@ -22,6 +22,7 @@ from repositories import (
     create_order as create_order_in_db,
     create_outbox_event,
     find_order_by_payment_id,
+    get_order_by_id,
     get_order_status,
     update_order_status,
 )
@@ -109,6 +110,17 @@ class OrderResponse(BaseModel):
     status: str
 
 
+class OrderDetailResponse(BaseModel):
+    """Детальная информация об ордере"""
+    id: str
+    user_id: str
+    payment_id: str
+    items: list[dict]
+    amount: Decimal
+    status: str
+    created_at: Optional[str] = None
+
+
 class PaymentCallback(BaseModel):
     """Callback от капаши"""
     payment_id: str
@@ -133,6 +145,34 @@ async def root():
 async def health():
     """Health check"""
     return {"status": "ok"}
+
+
+@app.get("/orders/{order_id}", response_model=OrderDetailResponse)
+async def get_order(order_id: str):
+    """
+    Получить информацию об ордере по ID.
+    
+    Возвращает полную информацию об ордере, включая текущий статус.
+    """
+    try:
+        order_id_uuid = UUID(order_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid order_id format: {order_id}",
+        )
+
+    session_factory = get_session()
+    async with session_factory() as session:
+        order_data = await get_order_by_id(session, order_id_uuid)
+        
+        if not order_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Order not found: {order_id}",
+            )
+        
+        return OrderDetailResponse(**order_data)
 
 
 @app.post("/orders", response_model=OrderResponse, status_code=201)

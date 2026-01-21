@@ -112,6 +112,65 @@ async def find_order_by_payment_id(
     return result.scalar_one_or_none()
 
 
+async def get_order_by_id(
+    session: AsyncSession,
+    order_id: UUID,
+) -> Optional[dict]:
+    """Получить полную информацию об ордере по ID"""
+    # Получаем последний статус
+    latest_status_subq = (
+        select(
+            order_statuses_tbl.c.order_id,
+            order_statuses_tbl.c.status,
+            func.row_number()
+            .over(
+                partition_by=order_statuses_tbl.c.order_id,
+                order_by=order_statuses_tbl.c.created_at.desc(),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
+    # Получаем ордер с текущим статусом
+    stmt = (
+        select(
+            orders_tbl.c.id,
+            orders_tbl.c.user_id,
+            orders_tbl.c.payment_id,
+            orders_tbl.c.items,
+            orders_tbl.c.amount,
+            orders_tbl.c.created_at,
+            latest_status_subq.c.status.label("current_status"),
+        )
+        .select_from(orders_tbl)
+        .outerjoin(
+            latest_status_subq,
+            and_(
+                orders_tbl.c.id == latest_status_subq.c.order_id,
+                latest_status_subq.c.rn == 1,
+            ),
+        )
+        .where(orders_tbl.c.id == order_id)
+    )
+    
+    result = await session.execute(stmt)
+    row = result.fetchone()
+    
+    if row is None:
+        return None
+    
+    return {
+        "id": str(row.id),
+        "user_id": row.user_id,
+        "payment_id": row.payment_id,
+        "items": row.items,
+        "amount": row.amount,
+        "status": row.current_status,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
 async def create_outbox_event(
     session: AsyncSession,
     event_type: str,
