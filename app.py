@@ -96,9 +96,9 @@ kafka_producer: Optional[AIOKafkaProducer] = None
 # Schemas
 class OrderCreate(BaseModel):
     """Создание ордера"""
-    amount: Decimal = Field(..., gt=0, description="Сумма платежа")
-    item_id: Optional[str] = Field(None, description="ID товара (опционально)")
-    user_id: str = Field(default="user-1", description="ID пользователя")
+    user_id: str = Field(..., description="ID пользователя")
+    quantity: int = Field(..., gt=0, description="Количество товара")
+    item_id: str = Field(..., description="ID товара")
     idempotency_key: Optional[str] = Field(None, description="Ключ идемпотентности")
 
 
@@ -180,13 +180,47 @@ async def create_order(order_data: OrderCreate):
     """
     Создать ордер и платеж в капаши.
 
-    1. Создаем ордер в БД со статусом NEW
-    2. Создаем платеж в капаши
-    3. Сохраняем payment_id в ордере
+    1. Получаем информацию о товаре из каталога капаши
+    2. Вычисляем сумму: price * quantity
+    3. Создаем ордер в БД со статусом NEW
+    4. Создаем платеж в капаши
+    5. Сохраняем payment_id в ордере
     """
     # Генерируем order_id
     order_id_uuid = uuid.uuid4()
     order_id_str = str(order_id_uuid)
+
+    # Получаем информацию о товаре из каталога капаши
+    try:
+        async with httpx.AsyncClient() as client:
+            catalog_response = await client.get(
+                f"{settings.capashi_url}/api/catalog/items/{order_data.item_id}",
+                headers={
+                    "X-API-Key": settings.capashi_api_key,
+                },
+                timeout=30.0,
+            )
+            catalog_response.raise_for_status()
+            item_data = catalog_response.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Item not found: {order_data.item_id}",
+            )
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Ошибка при получении товара из каталога: {e.response.text}",
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка подключения к капаши: {str(e)}",
+        )
+
+    # Вычисляем сумму заказа
+    item_price = Decimal(str(item_data["price"]))
+    total_amount = item_price * Decimal(order_data.quantity)
 
     # Формируем callback URL
     callback_url = f"{settings.callback_base_url}/callback"
@@ -198,7 +232,7 @@ async def create_order(order_data: OrderCreate):
                 f"{settings.capashi_url}/api/payments",
                 json={
                     "order_id": order_id_str,
-                    "amount": str(order_data.amount),
+                    "amount": str(total_amount),
                     "callback_url": callback_url,
                     "idempotency_key": order_data.idempotency_key,
                 },
@@ -226,11 +260,12 @@ async def create_order(order_data: OrderCreate):
     # Сохраняем ордер в БД
     session_factory = get_session()
     async with session_factory() as session:
-        items = []
-        if order_data.item_id:
-            items = [{"id": order_data.item_id, "name": f"Item {order_data.item_id}", "price": float(order_data.amount)}]
-        else:
-            items = [{"id": "item-1", "name": "Default Item", "price": float(order_data.amount)}]
+        items = [{
+            "id": order_data.item_id,
+            "name": item_data["name"],
+            "price": float(item_price),
+            "quantity": order_data.quantity
+        }]
 
         await create_order_in_db(
             session=session,
@@ -238,15 +273,15 @@ async def create_order(order_data: OrderCreate):
             user_id=order_data.user_id,
             payment_id=payment_id,
             items=items,
-            amount=order_data.amount,
+            amount=total_amount,
         )
 
-    logger.info(f"Created order {order_id_str} with payment {payment_id}")
+    logger.info(f"Created order {order_id_str} with payment {payment_id}, amount={total_amount}")
 
     return OrderResponse(
         order_id=order_id_str,
         payment_id=payment_id,
-        amount=Decimal(str(payment_data["amount"])),
+        amount=total_amount,
         status=OrderStatusEnum.NEW,
     )
 
@@ -292,20 +327,22 @@ async def payment_callback(callback: PaymentCallback):
 
         # Если платеж прошел - создаем событие в outbox для отправки в shipping
         if new_status == OrderStatusEnum.PAID:
-            # Получаем текущий статус для проверки
-            current_status = await get_order_status(session, order_id)
+            # Получаем информацию об ордере для отправки в shipping
+            order_data = await get_order_by_id(session, order_id)
 
-            # Создаем событие в outbox
-            payload = {
-                "order_id": str(order_id),
-                "event_type": "order.paid",
-            }
-            await create_outbox_event(
-                session=session,
-                event_type="order.paid",
-                payload=payload,
-            )
-            logger.info(f"Created outbox event for order {order_id}")
+            if order_data:
+                # Создаем событие в outbox с полной информацией об ордере
+                payload = {
+                    "order_id": str(order_id),
+                    "user_id": order_data["user_id"],
+                    "items": order_data["items"],  # Включает id, name, price, quantity
+                }
+                await create_outbox_event(
+                    session=session,
+                    event_type="order.paid",
+                    payload=payload,
+                )
+                logger.info(f"Created outbox event for order {order_id} with items: {order_data['items']}")
 
     return {
         "status": "received",
