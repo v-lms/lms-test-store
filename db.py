@@ -79,7 +79,7 @@ async def init_db(database_url: str):
     """Инициализация базы данных"""
     global engine, session_factory
 
-    engine = create_async_engine(database_url, echo=True)
+    engine = create_async_engine(database_url, echo=False)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
