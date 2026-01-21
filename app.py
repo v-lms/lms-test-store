@@ -310,10 +310,19 @@ async def payment_callback(callback: PaymentCallback):
             }
 
         # Определяем статус ордера
-        if callback.status.upper() == "SUCCESS" or callback.status.upper() == "PAID":
+        # Капаши отправляет статусы из PaymentStatus enum: "pending", "processing", "succeeded", "failed"
+        status_lower = callback.status.lower()
+        if status_lower == "succeeded":
             new_status = OrderStatusEnum.PAID
-        elif callback.status.upper() == "FAILED" or callback.status.upper() == "CANCELLED":
+        elif status_lower == "failed":
             new_status = OrderStatusEnum.CANCELLED
+        elif status_lower in ("pending", "processing"):
+            # Платеж еще обрабатывается, не меняем статус ордера
+            logger.info(f"Payment {callback.payment_id} is still {status_lower}, not updating order status")
+            return {
+                "status": "received",
+                "message": f"Payment is still {status_lower}",
+            }
         else:
             logger.warning(f"Unknown payment status: {callback.status}")
             return {
