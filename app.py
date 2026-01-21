@@ -17,13 +17,12 @@ from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import db
-from db import OrderStatusEnum
+from db import OrderStatusEnum, get_session
 from repositories import (
     create_order as create_order_in_db,
     create_outbox_event,
     find_order_by_payment_id,
     get_order_status,
-    get_session,
     update_order_status,
 )
 
