@@ -151,7 +151,7 @@ async def health():
 async def get_order(order_id: str):
     """
     Получить информацию об ордере по ID.
-    
+
     Возвращает полную информацию об ордере, включая текущий статус.
     """
     try:
@@ -165,13 +165,13 @@ async def get_order(order_id: str):
     session_factory = get_session()
     async with session_factory() as session:
         order_data = await get_order_by_id(session, order_id_uuid)
-        
+
         if not order_data:
             raise HTTPException(
                 status_code=404,
                 detail=f"Order not found: {order_id}",
             )
-        
+
         return OrderDetailResponse(**order_data)
 
 

@@ -153,13 +153,13 @@ async def get_order_by_id(
         )
         .where(orders_tbl.c.id == order_id)
     )
-    
+
     result = await session.execute(stmt)
     row = result.fetchone()
-    
+
     if row is None:
         return None
-    
+
     return {
         "id": str(row.id),
         "user_id": row.user_id,
