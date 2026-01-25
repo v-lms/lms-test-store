@@ -218,6 +218,18 @@ async def create_order(order_data: OrderCreate):
             detail=f"Ошибка подключения к капаши: {str(e)}",
         )
 
+    available_qty = item_data.get("available_qty", 0)
+    if available_qty <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Товар не в наличии",
+        )
+    if available_qty < order_data.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Товар не в наличии в нужном количестве. В наличии: {available_qty}, запрошено: {order_data.quantity}",
+        )
+
     # Вычисляем сумму заказа
     item_price = Decimal(str(item_data["price"]))
     total_amount = item_price * Decimal(order_data.quantity)
