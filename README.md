@@ -97,7 +97,21 @@ docker run -d \
 
 ## API Endpoints
 
-### POST /orders
+Все API endpoints имеют префикс `/api`.
+
+### GET /api/
+
+Корневой endpoint — информация о приложении.
+
+### GET /api/health
+
+Health check.
+
+### GET /api/orders/{order_id}
+
+Получить информацию об ордере по ID.
+
+### POST /api/orders
 
 Создает ордер и автоматически создает платеж в капаши.
 
@@ -145,7 +159,7 @@ docker run -d \
 }
 ```
 
-### POST /callback
+### POST /api/callback
 
 Endpoint для получения callback от капаши о статусе платежа.
 
@@ -198,7 +212,7 @@ Endpoint для получения callback от капаши о статусе 
 ### Создание ордера
 
 ```bash
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:8080/api/orders \
   -H "Content-Type: application/json" \
   -d '{
     "amount": "100.50",

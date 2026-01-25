@@ -11,7 +11,7 @@ from uuid import UUID
 
 import httpx
 from aiokafka import AIOKafkaProducer
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,8 @@ app = FastAPI(
     description="Тестовое приложение для интеграции с капаши",
     version="1.0.0",
 )
+
+api_router = APIRouter(prefix="/api")
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +133,7 @@ class PaymentCallback(BaseModel):
     processed_at: str
 
 
-@app.get("/")
+@api_router.get("/")
 async def root():
     """Корневой endpoint"""
     return {
@@ -141,13 +143,13 @@ async def root():
     }
 
 
-@app.get("/health")
+@api_router.get("/health")
 async def health():
     """Health check"""
     return {"status": "ok"}
 
 
-@app.get("/orders/{order_id}", response_model=OrderDetailResponse)
+@api_router.get("/orders/{order_id}", response_model=OrderDetailResponse)
 async def get_order(order_id: str):
     """
     Получить информацию об ордере по ID.
@@ -175,7 +177,7 @@ async def get_order(order_id: str):
         return OrderDetailResponse(**order_data)
 
 
-@app.post("/orders", response_model=OrderResponse, status_code=201)
+@api_router.post("/orders", response_model=OrderResponse, status_code=201)
 async def create_order(order_data: OrderCreate):
     """
     Создать ордер и платеж в капаши.
@@ -235,7 +237,7 @@ async def create_order(order_data: OrderCreate):
     total_amount = item_price * Decimal(order_data.quantity)
 
     # Формируем callback URL
-    callback_url = f"{settings.callback_base_url}/callback"
+    callback_url = f"{settings.callback_base_url}/api/callback"
 
     # Создаем платеж в капаши
     try:
@@ -298,7 +300,7 @@ async def create_order(order_data: OrderCreate):
     )
 
 
-@app.post("/callback")
+@api_router.post("/callback")
 async def payment_callback(callback: PaymentCallback):
     """
     Callback endpoint для получения уведомлений от капаши о статусе платежа.
@@ -401,6 +403,9 @@ async def payment_callback(callback: PaymentCallback):
         "status": "received",
         "message": "Callback processed successfully",
     }
+
+
+app.include_router(api_router)
 
 
 @app.on_event("startup")
