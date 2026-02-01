@@ -10,7 +10,7 @@ from aiokafka import AIOKafkaConsumer
 from pydantic_settings import BaseSettings
 
 from db import OrderStatusEnum, get_session
-from repositories import update_order_status
+from repositories import get_order_by_id, update_order_status
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,15 @@ async def process_shipment_events():
 
                 session_factory = get_session()
                 async with session_factory() as session:
+                    # Пропускаем события для заказов из других сервисов 
+                    order = await get_order_by_id(session, order_id)
+                    if not order:
+                        logger.debug(
+                            f"Skipping event {event_type} for order {order_id_str}: "
+                            "order not found (created by another service)"
+                        )
+                        continue
+
                     await update_order_status(session, order_id, new_status)
                     logger.info(f"Updated order {order_id_str} status to {new_status}")
 
