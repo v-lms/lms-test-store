@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """Настройки приложения"""
-    capashi_url: str = "https://capashino.dev-1.python-labs.ru/"
+    capashi_url: str = "https://capashino.dev-1.python-labs.ru"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
     callback_base_url: str = "https://vladarefiev-order-service.dev-1.python-labs.ru"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
