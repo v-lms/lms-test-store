@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     """Настройки consumer"""
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_group_id: str = "test-store-consumer-group"
-    kafka_topic_shipping_events: str = "student_system_shipment.events"
+    kafka_topic_shipping_events: str = "student_system-shipment.events"
 
     class Config:
         env_file = ".env"
@@ -85,7 +85,7 @@ async def process_shipment_events():
 
                 session_factory = get_session()
                 async with session_factory() as session:
-                    # Пропускаем события для заказов из других сервисов 
+                    # Пропускаем события для заказов из других сервисов
                     order = await get_order_by_id(session, order_id)
                     if not order:
                         logger.debug(
