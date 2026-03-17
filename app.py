@@ -40,9 +40,9 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """Настройки приложения"""
-    capashi_url: str = "https://capashino.dev-1.python-labs.ru"
+    capashi_url: str = "http://student-system-capashino-web.student-system-capashino.svc:8000"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
-    callback_base_url: str = "https://vladarefiev-order-service.dev-1.python-labs.ru"
+    callback_base_url: str = "https://student-vladarefiev-order-service"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_topic_order_events: str = "student_system-order.events"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/teststore"
