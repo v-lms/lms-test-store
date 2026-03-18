@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     """Настройки приложения"""
     capashi_url: str = "http://student-system-capashino-web.student-system-capashino.svc:8000"
     capashi_api_key: str = "b5brEutpPGGf6mGNqpTbFTAZPL8ILEuJ2RQf3jM7P-4"
-    callback_base_url: str = "https://student-vladarefiev-order-service"
+    callback_base_url: str = "http://student-vladarefiev-order-service-web.student-vladarefiev-order-service.svc:8000"
     kafka_brokers: str = "kafka.kafka.svc.cluster.local:9092"
     kafka_topic_order_events: str = "student_system-order.events"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/teststore"
