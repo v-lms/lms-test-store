@@ -22,6 +22,7 @@ async def create_order(
     session: AsyncSession,
     order_id: UUID,
     user_id: str,
+    idempotency_key: Optional[str],
     payment_id: str,
     items: list[dict],
     amount: Decimal,
@@ -33,6 +34,7 @@ async def create_order(
         .values(
             id=order_id,
             user_id=user_id,
+            idempotency_key=idempotency_key,
             payment_id=payment_id,
             items=items,
             amount=amount,
@@ -51,6 +53,16 @@ async def create_order(
 
     await session.commit()
     return order_id
+
+
+async def find_order_by_idempotency_key(
+    session: AsyncSession,
+    idempotency_key: str,
+) -> Optional[UUID]:
+    """Найти ордер по idempotency_key заказа."""
+    stmt = select(orders_tbl.c.id).where(orders_tbl.c.idempotency_key == idempotency_key)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def update_order_status(

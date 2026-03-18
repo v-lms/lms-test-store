@@ -9,6 +9,7 @@ from uuid import UUID
 from aiokafka import AIOKafkaConsumer
 from pydantic_settings import BaseSettings
 
+from app import _send_notification_with_retry
 from db import OrderStatusEnum, get_session
 from repositories import get_order_by_id, update_order_status
 
@@ -96,6 +97,13 @@ async def process_shipment_events():
 
                     await update_order_status(session, order_id, new_status)
                     logger.info(f"Updated order {order_id_str} status to {new_status}")
+
+                    asyncio.create_task(
+                        _send_notification_with_retry(
+                            order_id=order_id_str,
+                            status=new_status,
+                        )
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing message: {e}", exc_info=True)

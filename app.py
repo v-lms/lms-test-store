@@ -2,6 +2,7 @@
 Простое приложение для тестирования интеграции с капаши
 """
 import json
+import asyncio
 import logging
 import os
 import uuid
@@ -22,6 +23,7 @@ from repositories import (
     create_order as create_order_in_db,
     create_outbox_event,
     find_order_by_payment_id,
+    find_order_by_idempotency_key,
     get_order_by_id,
     get_order_status,
     update_order_status,
@@ -133,6 +135,80 @@ class PaymentCallback(BaseModel):
     processed_at: str
 
 
+def _notification_message(status: OrderStatusEnum, reason: Optional[str]) -> str:
+    if status == OrderStatusEnum.NEW:
+        return "NEW: Ваш заказ создан и ожидает оплаты"
+    if status == OrderStatusEnum.PAID:
+        return "PAID: Ваш заказ успешно оплачен и готов к отправке"
+    if status == OrderStatusEnum.SHIPPED:
+        return "SHIPPED: Ваш заказ отправлен в доставку"
+    if status == OrderStatusEnum.CANCELLED:
+        r = (reason or "").strip()
+        if r:
+            return f"CANCELLED: Ваш заказ отменен. Причина: {r}"
+        return "CANCELLED: Ваш заказ отменен"
+    return f"{status}: Ваш заказ обновлен"
+
+
+async def _send_notification_with_retry(
+    *,
+    order_id: str,
+    status: OrderStatusEnum,
+    reason: Optional[str] = None,
+) -> None:
+    # Уведомления не должны блокировать основной процесс.
+    # Notifications Service в учебном проекте может иногда отвечать 5xx,
+    # поэтому делаем ретраи в фоновой таске.
+    message = _notification_message(status, reason)
+    idempotency_key = f"order-notification:{order_id}:{status}"
+
+    headers = {
+        "X-API-Key": settings.capashi_api_key,
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "message": message,
+        "reference_id": order_id,
+        "idempotency_key": idempotency_key,
+    }
+
+    max_attempts = 10
+    delay_seconds = 1
+
+    async with httpx.AsyncClient() as client:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = await client.post(
+                    f"{settings.capashi_url}/api/notifications",
+                    json=payload,
+                    headers=headers,
+                    timeout=10.0,
+                )
+
+                # 201/200 - успешно, 409 - уже есть (идемпотентность).
+                if resp.status_code in (200, 201, 409):
+                    return
+
+                logger.warning(
+                    f"notification send failed, will retry "
+                    f"(attempt={attempt} status_code={resp.status_code} order_id={order_id} notification_status={str(status)} "
+                    f"response_body={resp.text[:500]})"
+                )
+            except httpx.RequestError as e:
+                logger.warning(
+                    f"notification request error, will retry "
+                    f"(attempt={attempt} error={str(e)} order_id={order_id} notification_status={str(status)})"
+                )
+
+            if attempt < max_attempts:
+                await asyncio.sleep(delay_seconds)
+
+    logger.error(
+        f"notification send exhausted retries (order_id={order_id} notification_status={str(status)})"
+    )
+
+
 @api_router.get("/")
 async def root():
     """Корневой endpoint"""
@@ -188,6 +264,36 @@ async def create_order(order_data: OrderCreate):
     4. Создаем платеж в капаши
     5. Сохраняем payment_id в ордере
     """
+    session_factory = get_session()
+
+    # Идемпотентность создания ордера:
+    # если order_data.idempotency_key уже использовался — возвращаем ранее созданный order_id.
+    if order_data.idempotency_key:
+        async with session_factory() as session:
+            existing_order_id = await find_order_by_idempotency_key(session, order_data.idempotency_key)
+            if existing_order_id:
+                existing = await get_order_by_id(session, existing_order_id)
+                if existing:
+                    existing_status_str = existing.get("status") or OrderStatusEnum.NEW
+                    try:
+                        existing_status = OrderStatusEnum(existing_status_str)
+                    except ValueError:
+                        existing_status = OrderStatusEnum.NEW
+
+                    asyncio.create_task(
+                        _send_notification_with_retry(
+                            order_id=str(existing_order_id),
+                            status=existing_status,
+                        )
+                    )
+
+                    return OrderResponse(
+                        order_id=str(existing_order_id),
+                        payment_id=existing["payment_id"],
+                        amount=existing["amount"],
+                        status=str(existing_status),
+                    )
+
     # Генерируем order_id
     order_id_uuid = uuid.uuid4()
     order_id_str = str(order_id_uuid)
@@ -285,12 +391,20 @@ async def create_order(order_data: OrderCreate):
             session=session,
             order_id=order_id_uuid,
             user_id=order_data.user_id,
+            idempotency_key=order_data.idempotency_key,
             payment_id=payment_id,
             items=items,
             amount=total_amount,
         )
 
     logger.info(f"Created order {order_id_str} with payment {payment_id}, amount={total_amount}")
+
+    asyncio.create_task(
+        _send_notification_with_retry(
+            order_id=order_id_str,
+            status=OrderStatusEnum.NEW,
+        )
+    )
 
     return OrderResponse(
         order_id=order_id_str,
@@ -347,6 +461,14 @@ async def payment_callback(callback: PaymentCallback):
         # Обновляем статус ордера
         await update_order_status(session, order_id, new_status)
         logger.info(f"Updated order {order_id} status to {new_status}")
+
+        asyncio.create_task(
+            _send_notification_with_retry(
+                order_id=str(order_id),
+                status=new_status,
+                reason=callback.error_message,
+            )
+        )
 
         # Если платеж прошел - создаем событие в outbox для отправки в shipping
         if new_status == OrderStatusEnum.PAID:

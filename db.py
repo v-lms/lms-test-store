@@ -30,6 +30,7 @@ orders_tbl = Table(
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
     Column("user_id", Text, nullable=False),
+    Column("idempotency_key", Text, nullable=True, unique=True),
     Column("payment_id", Text, nullable=True),
     Column("items", JSON, nullable=False),
     Column("amount", DECIMAL(10, 2), nullable=False),
